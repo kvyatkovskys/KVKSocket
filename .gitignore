@@ -7,3 +7,7 @@ DerivedData/
 .swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
 
 *.xcscheme
+
+*.xcworkspacedata
+
+KVKSocketDemo/KVKSocketDemo.xcodeproj/project.xcworkspace/xcshareddata/
