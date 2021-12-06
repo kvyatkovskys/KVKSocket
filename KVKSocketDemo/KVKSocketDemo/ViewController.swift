@@ -16,7 +16,8 @@ final class ViewController: UIViewController {
     private let socket = WebSocket(parameters: WebSocket.Parameters(host: "192.168.1.113",
                                                                     path: "/cards",
                                                                     port: 8080,
-                                                                    scheme: "ws"))
+                                                                    scheme: "ws",
+                                                                    sendPingPong: true))
     
     private lazy var connectButton: UIButton = {
         let button = UIButton(type: .system)
@@ -45,13 +46,21 @@ final class ViewController: UIViewController {
                 if let err = error {
                     print(err)
                 }
+            case .ping:
+                print("ping")
+            case .pong(let date):
+                print("pong", date)
             case .message(let msg):
                 switch msg {
                 case .text(let txt):
                     print(txt)
                 case .binary(let data):
-                    print(data)
+                    if let model = try? JSONDecoder().decode(BaseMessage.self, from: data) {
+                        print(String(data: model.result, encoding: .utf8))
+                    }
                 }
+            case .reconnecting:
+                print("reconnecting")
             }
         }
     }

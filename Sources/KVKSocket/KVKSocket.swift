@@ -22,6 +22,9 @@ public class WebSocket: NSObject {
         let sendPingPong: Bool
         /// Seconds
         let pingPongInterval: Int
+        let availableReconnect: Bool
+        /// Seconds
+        let reconnectingInterval: Int
         let delegateQueue: OperationQueue?
         
         public init(url: URL? = nil,
@@ -31,9 +34,11 @@ public class WebSocket: NSObject {
                     parameters: [String: String] = [:],
                     headers: [String: String] = [:],
                     scheme: String = "wss",
-                    timeoutInterval: TimeInterval = 5,
+                    timeoutInterval: TimeInterval = 60,
                     sendPingPong: Bool = false,
                     pingPongInterval: Int = 5,
+                    availableReconnect: Bool = false,
+                    reconnectingInterval: Int = 5,
                     delegateQueue: OperationQueue? = nil)
         {
             self.url = url
@@ -46,6 +51,8 @@ public class WebSocket: NSObject {
             self.timeoutInterval = timeoutInterval
             self.sendPingPong = sendPingPong
             self.pingPongInterval = pingPongInterval
+            self.availableReconnect = availableReconnect
+            self.reconnectingInterval = reconnectingInterval
             self.delegateQueue = delegateQueue
         }
     }
@@ -54,7 +61,11 @@ public class WebSocket: NSObject {
         subject.eraseToAnyPublisher()
     }
     
+    private var session: URLSession?
+    private var request: URLRequest?
+    private var lastModifiedDate: Date?
     private let subject = PassthroughSubject<Event, Never>()
+    private var cancellableSubject: Cancellable?
     private var task: URLSessionWebSocketTask?
     private let params: Parameters
     private let webSocketQueue = DispatchQueue(label: "kvksocket.websocket", qos: .background, attributes: .concurrent)
@@ -69,9 +80,9 @@ public class WebSocket: NSObject {
         self.params = parameters
         super.init()
         
-        let session = URLSession(configuration: .default,
-                                 delegate: self,
-                                 delegateQueue: params.delegateQueue ?? delegateQueue)
+        session = URLSession(configuration: .default,
+                             delegate: self,
+                             delegateQueue: params.delegateQueue ?? delegateQueue)
         
         let url: URL
         if let item = parameters.url {
@@ -95,19 +106,40 @@ public class WebSocket: NSObject {
             url = item
         }
         
-        var request = URLRequest(url: url)
-        request.timeoutInterval = params.timeoutInterval
+        request = URLRequest(url: url)
+        request?.timeoutInterval = params.timeoutInterval
         
         if !params.headers.isEmpty {
             params.headers.forEach {
-                request.addValue($0.value, forHTTPHeaderField: $0.key)
+                request?.addValue($0.value, forHTTPHeaderField: $0.key)
             }
         }
         
-        task = session.webSocketTask(with: request)
+        cancellableSubject = subject.sink(receiveCompletion: { (error) in
+            print(error)
+        }) { [weak self] (event) in
+            if case .error = event,
+                self?.params.availableReconnect == true,
+                let interval = self?.params.reconnectingInterval
+            {
+                self?.runWithAfter(interval: interval) { [weak self] in
+                    self?.task?.resume()
+                }
+            }
+        }
+    }
+    
+    deinit {
+        if task != nil {
+            disconnect()
+        }
+        cancellableSubject?.cancel()
     }
     
     public func connect() {
+        if let item = request {
+            task = session?.webSocketTask(with: item)
+        }
         task?.resume()
     }
     
@@ -120,6 +152,8 @@ public class WebSocket: NSObject {
         }
         
         task?.cancel(with: .goingAway, reason: reasonData)
+        task = nil
+        lastModifiedDate = nil
     }
     
     public func send(_ message: Message) {
@@ -163,10 +197,19 @@ public class WebSocket: NSObject {
         }
     }
     
+    private func runWithAfter(interval: Int, action: @escaping () -> Void) {
+        let deadline = DispatchTime.now() + DispatchTimeInterval.seconds(interval)
+        webSocketQueue.asyncAfter(deadline: deadline) {
+            action()
+        }
+    }
+    
     private func recieve() {
         task?.receive { [weak self] (result) in
             switch result {
             case .success(let msg):
+                self?.lastModifiedDate = Date()
+                
                 switch msg {
                 case .data(let data):
                     self?.subject.send(.message(.binary(data)))
@@ -184,14 +227,29 @@ public class WebSocket: NSObject {
     }
     
     private func ping() {
+        func runPing() {
+            runWithAfter(interval: params.pingPongInterval) { [weak self] in
+                self?.ping()
+            }
+        }
+        
+        if let lastDate = lastModifiedDate {
+            let newDate = lastDate.addingTimeInterval(TimeInterval(params.pingPongInterval))
+            guard Date() > newDate else {
+                runPing()
+                return
+            }
+        } else {
+            return
+        }
+        
+        subject.send(.ping)
         task?.sendPing { [weak self] (error) in
             if let err = error {
                 self?.subject.send(.error(err))
             } else if let self = self {
-                let interval = DispatchTime.now() + DispatchTimeInterval.seconds(self.params.pingPongInterval)
-                DispatchQueue.global().asyncAfter(deadline: interval) { [weak self] in
-                    self?.ping()
-                }
+                self.subject.send(.pong(Date()))
+                runPing()
             }
         }
     }
@@ -201,6 +259,8 @@ public class WebSocket: NSObject {
 extension WebSocket: URLSessionWebSocketDelegate {
     
     public func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
+        lastModifiedDate = Date()
+        
         if params.sendPingPong {
             ping()
         }
@@ -221,7 +281,10 @@ extension WebSocket {
         case connected,
              disconnected(URLSessionWebSocketTask.CloseCode, Data?),
              error(Error?),
-             message(Message)
+             reconnecting,
+             message(Message),
+             ping,
+             pong(Date)
     }
     
     public enum Message {
