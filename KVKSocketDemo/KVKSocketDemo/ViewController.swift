@@ -13,7 +13,7 @@ final class ViewController: UIViewController {
     
     private var cancellableSocket: AnyCancellable?
     
-    private let socket = WebSocket(parameters: WebSocket.Parameters(host: "192.168.1.113",
+    private let socket = WebSocket(parameters: WebSocket.Parameters(host: "localhost",
                                                                     path: "/cards",
                                                                     port: 8080,
                                                                     scheme: "ws",
