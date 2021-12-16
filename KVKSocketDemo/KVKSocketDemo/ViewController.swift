@@ -11,7 +11,7 @@ import Combine
 
 final class ViewController: UIViewController {
     
-    private var cancellableSocket: AnyCancellable?
+    private var subscriptions = Set<AnyCancellable>()
     
     private let socket = WebSocket(parameters: WebSocket.Parameters(host: "localhost",
                                                                     path: "/cards",
@@ -33,13 +33,10 @@ final class ViewController: UIViewController {
         view.backgroundColor = .white
         view.addSubview(connectButton)
 
-        cancellableSocket = socket?.event.sink { [weak self] (event) in
+        socket?.event.sink { (event) in
             switch event {
             case .connected:
                 print("Socket did connect")
-                if let data = self?.createStartMessage() {
-                    self?.socket?.send(.text(data))
-                }
             case .disconnected(_, _):
                 print("Socket did disconnect")
             case .error(let error):
@@ -55,20 +52,18 @@ final class ViewController: UIViewController {
                 case .text(let txt):
                     print(txt)
                 case .binary(let data):
-                    if let model = try? JSONDecoder().decode(BaseMessage.self, from: data) {
-                        print(String(data: model.result, encoding: .utf8))
-                    }
+                    print(String(data: data, encoding: .utf8) ?? "")
                 }
             case .reconnecting:
                 print("reconnecting")
             }
-        }
+        }.store(in: &subscriptions)
     }
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         
-        cancellableSocket?.cancel()
+        subscriptions.removeAll()
     }
     
     @objc private func connectSocket(_ sender: UIButton) {
@@ -87,27 +82,4 @@ final class ViewController: UIViewController {
         }
     }
     
-    private func createStartMessage() -> String? {
-        let initMsg = InitMessage(locationid: 1,
-                                  token: "")
-
-        let encoder = JSONEncoder()
-        guard let jsonInitData = try? encoder.encode(initMsg) else { return nil }
-        
-        let baseMsg = BaseMessage(type: 1, result: jsonInitData)
-        guard let json = try? encoder.encode(baseMsg) else { return nil }
-        
-        return String(data: json, encoding: .utf8)
-    }
-    
-}
-
-struct BaseMessage: Codable {
-    let type: Int
-    let result: Data
-}
-
-struct InitMessage: Codable {
-    let locationid: Int
-    let token: String
 }

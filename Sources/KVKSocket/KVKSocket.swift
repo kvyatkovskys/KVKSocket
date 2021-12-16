@@ -37,8 +37,8 @@ public class WebSocket: NSObject {
                     timeoutInterval: TimeInterval = 60,
                     sendPingPong: Bool = false,
                     pingPongInterval: Int = 5,
-                    availableReconnect: Bool = false,
-                    reconnectingInterval: Int = 5,
+                    availableReconnect: Bool = true,
+                    reconnectingInterval: Int = 3,
                     delegateQueue: OperationQueue? = nil)
         {
             self.url = url
@@ -65,20 +65,23 @@ public class WebSocket: NSObject {
     private var request: URLRequest?
     private var lastModifiedDate: Date?
     private let subject = PassthroughSubject<Event, Never>()
-    private var cancellableSubject: Cancellable?
+    private var subcriptions = Set<AnyCancellable>()
     private var task: URLSessionWebSocketTask?
     private let params: Parameters
-    private let webSocketQueue = DispatchQueue(label: "kvksocket.websocket", qos: .background, attributes: .concurrent)
-    private lazy var delegateQueue: OperationQueue = {
+    private let webSocketQueue = DispatchQueue(label: "com.kvk.websocket",
+                                               qos: .default,
+                                               attributes: .concurrent)
+    private let delegateQueue: OperationQueue = {
         let queue = OperationQueue()
-        queue.name = "kvksocket.websocket"
-        queue.underlyingQueue = webSocketQueue
+        queue.name = "com.kvk.websocket.operation"
         return queue
     }()
     
     public init?(parameters: Parameters) {
         self.params = parameters
         super.init()
+        
+        delegateQueue.underlyingQueue = webSocketQueue
         
         session = URLSession(configuration: .default,
                              delegate: self,
@@ -95,7 +98,8 @@ public class WebSocket: NSObject {
             urlComponents.port = params.port
             
             if !params.parameters.isEmpty {
-                urlComponents.queryItems = params.parameters.compactMap { URLQueryItem(name: $0.key, value: $0.value) }
+                urlComponents.queryItems = params.parameters.compactMap { URLQueryItem(name: $0.key,
+                                                                                       value: $0.value) }
             }
             
             guard let item = urlComponents.url else {
@@ -115,25 +119,24 @@ public class WebSocket: NSObject {
             }
         }
         
-        cancellableSubject = subject.sink(receiveCompletion: { (error) in
-            print(error)
-        }) { [weak self] (event) in
+        subject.sink { [weak self] (event) in
             if case .error = event,
-                self?.params.availableReconnect == true,
-                let interval = self?.params.reconnectingInterval
+               self?.params.availableReconnect == true,
+               let interval = self?.params.reconnectingInterval
             {
                 self?.runWithAfter(interval: interval) { [weak self] in
+                    self?.subject.send(.reconnecting)
                     self?.task?.resume()
                 }
             }
-        }
+        }.store(in: &subcriptions)
     }
     
     deinit {
         if task != nil {
             disconnect()
         }
-        cancellableSubject?.cancel()
+        subcriptions.removeAll()
     }
     
     public func connect() {
