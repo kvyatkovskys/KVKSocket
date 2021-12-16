@@ -169,7 +169,7 @@ public class WebSocket: NSObject {
     
     //MARK: Private
     
-    @available(iOS 15.0.0, *)
+    @available(iOS 15.0.0, macOS 12.0, *)
     func sendAsync(_ message: Message) async throws {
         do {
             try await task?.send(message.socketMsg)
@@ -178,7 +178,7 @@ public class WebSocket: NSObject {
         }
     }
     
-    @available(iOS 15.0.0, *)
+    @available(iOS 15.0.0, macOS 12.0, *)
     private func recieveAsync() async throws {
         do {
             let message = try await task?.receive()
