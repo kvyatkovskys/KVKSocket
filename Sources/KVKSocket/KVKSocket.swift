@@ -167,10 +167,8 @@ public class WebSocket: NSObject {
         }
     }
     
-    //MARK: Private
-    
     @available(iOS 15.0.0, macOS 12.0, *)
-    func sendAsync(_ message: Message) async throws {
+    func sendAsync(_ message: Message) async {
         do {
             try await task?.send(message.socketMsg)
         } catch {
@@ -178,8 +176,10 @@ public class WebSocket: NSObject {
         }
     }
     
+    //MARK: Private
+    
     @available(iOS 15.0.0, macOS 12.0, *)
-    private func recieveAsync() async throws {
+    private func recieveAsync() async {
         do {
             let message = try await task?.receive()
             
@@ -194,7 +194,7 @@ public class WebSocket: NSObject {
                 fatalError()
             }
             
-            try await recieveAsync()
+            await recieveAsync()
         } catch {
             subject.send(.error(error))
         }
